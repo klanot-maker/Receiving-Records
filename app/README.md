@@ -1,9 +1,9 @@
 # Receiving Record Capture App
 
-A small web app: take a photo of an invoice or purchase order, and Claude
-extracts the product lines (supplier, product, brand, qty, temp, production
-date, expiry/BB date) so you can review and save them straight into the
-**Daily Goods Receiving Record** Google Sheet.
+A small web app: take a photo of an invoice or purchase order, and Google
+Gemini extracts the product lines (supplier, product, brand, qty, temp,
+production date, expiry/BB date) so you can review and save them straight
+into the **Daily Goods Receiving Record** Google Sheet.
 
 Sheet: https://docs.google.com/spreadsheets/d/1R_qUspQW-elqBi3UGEXt5gNLuy2qkVrlyRnhkaEveKI/edit#gid=0
 
@@ -15,7 +15,7 @@ I Expiry / Best-before date.
 
 1. Open the page on your phone, take a photo (or several pages) of the
    invoice/PO.
-2. The app sends the photo(s) to Claude, which reads printed text *and*
+2. The app sends the photo(s) to Gemini, which reads printed text *and*
    handwritten notes/stamps (receiving date, temperature, etc.) and returns
    one row per product line.
 3. You review/edit the extracted rows in an editable table (OCR isn't
@@ -25,9 +25,15 @@ I Expiry / Best-before date.
 
 ## One-time setup
 
-### 1. Anthropic API key
+### 1. Google Gemini API key (for reading the photos)
 
-Get a key at https://console.anthropic.com and set it as `ANTHROPIC_API_KEY`.
+Go to https://aistudio.google.com/apikey, sign in with a Google account, and
+create a free API key. Set it as `GOOGLE_API_KEY`.
+
+If your organization already has Google Cloud / Vertex AI access and you'd
+rather not use a separate AI Studio key, you can use Vertex AI instead — set
+`GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT` in `.env` (see
+`.env.example`); no `GOOGLE_API_KEY` needed in that case.
 
 ### 2. Google service account (so the app can write to the Sheet)
 
@@ -46,7 +52,7 @@ Get a key at https://console.anthropic.com and set it as `ANTHROPIC_API_KEY`.
 ```bash
 cd app
 cp .env.example .env
-# edit .env: set ANTHROPIC_API_KEY, GOOGLE_SERVICE_ACCOUNT_FILE, SHEET_ID, SHEET_NAME
+# edit .env: set GOOGLE_API_KEY, GOOGLE_SERVICE_ACCOUNT_FILE, SHEET_ID, SHEET_NAME
 ```
 
 `SHEET_ID` is already set to the sheet from the task; `SHEET_NAME` is the tab
