@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receiving Record Capture</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    margin: 0; padding: 16px; background: #f5f6f8; color: #1a1a1a;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  p.sub { color: #555; margin: 0 0 16px; font-size: 0.9rem; }
+  .card {
+    background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  label.upload-btn {
+    display: block; text-align: center; padding: 18px; border: 2px dashed #9aa3af;
+    border-radius: 10px; color: #33475b; font-weight: 600; cursor: pointer;
+  }
+  input[type=file] { display: none; }
+  #thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  #thumbs img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd; }
+  button {
+    font-size: 1rem; padding: 10px 16px; border-radius: 8px; border: none;
+    cursor: pointer; font-weight: 600;
+  }
+  button.primary { background: #2563eb; color: #fff; width: 100%; margin-top: 12px; }
+  button.primary:disabled { background: #9aa3af; cursor: not-allowed; }
+  button.secondary { background: #e5e7eb; color: #1a1a1a; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { border: 1px solid #e2e2e2; padding: 4px; text-align: left; }
+  th { background: #f0f2f5; font-size: 0.75rem; }
+  td input { width: 100%; border: none; background: transparent; font-size: 0.85rem; padding: 4px; }
+  td input:focus { background: #eef4ff; outline: 1px solid #93c5fd; }
+  .row-actions { text-align: center; }
+  #status { margin-top: 10px; font-size: 0.9rem; }
+  #status.error { color: #b91c1c; }
+  #status.ok { color: #15803d; }
+  .table-wrap { overflow-x: auto; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff;
+    border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<h1>Receiving Record Capture</h1>
+<p class="sub">Photograph an invoice or purchase order — Claude reads it, then you confirm before it's saved to the sheet.</p>
+
+<div class="card">
+  <label class="upload-btn" for="photoInput">📷 Take / choose photo(s)</label>
+  <input id="photoInput" type="file" accept="image/*" capture="environment" multiple>
+  <div id="thumbs"></div>
+  <button id="extractBtn" class="primary" disabled>Read document</button>
+  <div id="status"></div>
+</div>
+
+<div class="card" id="reviewCard" style="display:none;">
+  <div class="table-wrap">
+    <table id="rowsTable">
+      <thead>
+        <tr>
+          <th>Receiving date</th><th>Receiving time</th><th>Supplier</th>
+          <th>Product name</th><th>Brand</th><th>Qty</th>
+          <th>Product temp</th><th>Product date</th><th>Expiry / BB date</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="rowsBody"></tbody>
+    </table>
+  </div>
+  <button id="addRowBtn" class="secondary" style="margin-top:10px;">+ Add row</button>
+  <button id="saveBtn" class="primary">Save to sheet</button>
+  <div id="saveStatus"></div>
+</div>
+
+<script>
+const COLUMNS = ["receiving_date","receiving_time","supplier_name","product_name","brand","qty","product_temp","product_date","expiry_date"];
+let selectedFiles = [];
+
+const photoInput = document.getElementById('photoInput');
+const thumbs = document.getElementById('thumbs');
+const extractBtn = document.getElementById('extractBtn');
+const status = document.getElementById('status');
+const reviewCard = document.getElementById('reviewCard');
+const rowsBody = document.getElementById('rowsBody');
+const saveStatus = document.getElementById('saveStatus');
+
+photoInput.addEventListener('change', () => {
+  selectedFiles = Array.from(photoInput.files);
+  thumbs.innerHTML = '';
+  selectedFiles.forEach(f => {
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(f);
+    thumbs.appendChild(img);
+  });
+  extractBtn.disabled = selectedFiles.length === 0;
+});
+
+extractBtn.addEventListener('click', async () => {
+  status.textContent = '';
+  status.className = '';
+  extractBtn.disabled = true;
+  extractBtn.innerHTML = '<span class="spinner"></span>Reading…';
+
+  const form = new FormData();
+  selectedFiles.forEach(f => form.append('photos', f));
+
+  try {
+    const res = await fetch('/extract', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Extraction failed.');
+    renderRows(data.rows);
+    reviewCard.style.display = 'block';
+    reviewCard.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    status.textContent = err.message;
+    status.className = 'error';
+  } finally {
+    extractBtn.disabled = false;
+    extractBtn.textContent = 'Read document';
+  }
+});
+
+function addRow(row) {
+  row = row || Object.fromEntries(COLUMNS.map(c => [c, '']));
+  const tr = document.createElement('tr');
+  COLUMNS.forEach(col => {
+    const td = document.createElement('td');
+    const input = document.createElement('input');
+    input.value = row[col] || '';
+    input.dataset.col = col;
+    td.appendChild(input);
+    tr.appendChild(td);
+  });
+  const actionTd = document.createElement('td');
+  actionTd.className = 'row-actions';
+  const del = document.createElement('button');
+  del.textContent = '✕';
+  del.className = 'secondary';
+  del.type = 'button';
+  del.addEventListener('click', () => tr.remove());
+  actionTd.appendChild(del);
+  tr.appendChild(actionTd);
+  rowsBody.appendChild(tr);
+}
+
+function renderRows(rows) {
+  rowsBody.innerHTML = '';
+  rows.forEach(addRow);
+  if (rows.length === 0) addRow();
+}
+
+document.getElementById('addRowBtn').addEventListener('click', () => addRow());
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  const rows = Array.from(rowsBody.querySelectorAll('tr')).map(tr => {
+    const row = {};
+    tr.querySelectorAll('input').forEach(input => { row[input.dataset.col] = input.value; });
+    return row;
+  });
+
+  saveStatus.textContent = 'Saving…';
+  saveStatus.className = '';
+  try {
+    const res = await fetch('/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Save failed.');
+    saveStatus.textContent = `Saved ${data.saved} row(s) to the sheet.`;
+    saveStatus.className = 'ok';
+  } catch (err) {
+    saveStatus.textContent = err.message;
+    saveStatus.className = 'error';
+  }
+});
+</script>
+</body>
+</html>
