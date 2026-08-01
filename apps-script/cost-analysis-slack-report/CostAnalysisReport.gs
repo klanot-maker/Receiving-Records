@@ -134,6 +134,11 @@ function sendCostAnalysisReport() {
 // ============================================================
 // MESSAGE BUILDER
 // ============================================================
+// Slack messages have no font-color control, so an "increased" metric is
+// flagged the way Slack actually supports it: a red side-bar on its own
+// attachment (color: 'danger'). Each line that needs a bar becomes its own
+// attachment; header/divider text and unchanged/decreased lines are grouped
+// into plain (uncolored) attachments so the message still reads as blocks.
 function buildMessage(cur, prev, curMonthName, prevMonthName) {
 
   function delta(current, previous) {
@@ -143,6 +148,13 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
     if (pct > 0.05)  return `▲ +${pct.toFixed(1)}%  _(increased)_`;
     if (pct < -0.05) return `▼ ${pct.toFixed(1)}%  _(decreased)_`;
     return '─  0.0%  _(no change)_';
+  }
+
+  // "New" (previous 0, current > 0) counts as an increase — a cost that
+  // didn't exist before is exactly the kind of thing this flag is for.
+  function isIncrease(current, previous) {
+    if (previous === 0) return current !== 0;
+    return ((current - previous) / Math.abs(previous)) * 100 > 0.05;
   }
 
   function aed(v) {
@@ -155,7 +167,10 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
 
   function line(label, curVal, prevVal, formatter) {
     if (!curVal || curVal === 0) return null;
-    return `• *${label}*   ${formatter(curVal)}   ${delta(curVal, prevVal)}`;
+    return {
+      text : `• *${label}*   ${formatter(curVal)}   ${delta(curVal, prevVal)}`,
+      color: isIncrease(curVal, prevVal) ? 'danger' : null,
+    };
   }
 
   const wastageLines = [
@@ -184,7 +199,15 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
     line('Marketplace Food Cost:', cur.mktFood,    prev.mktFood,    aed),
   ].filter(l => l !== null);
 
-  const sections = [
+  function attachment(text, color) {
+    const a = { blocks: [{ type: 'section', text: { type: 'mrkdwn', text: text } }] };
+    if (color) a.color = color;
+    return a;
+  }
+
+  const attachments = [];
+
+  attachments.push(attachment([
     `🌅 *Good Morning!*`,
     ``,
     `📊 *${curMonthName} vs ${prevMonthName} — Cost Analysis Report*`,
@@ -192,12 +215,20 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `♻️ *WASTAGE BREAKDOWN*`,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-    ...wastageLines,
+  ].join('\n')));
+
+  wastageLines.forEach(l => attachments.push(attachment(l.text, l.color)));
+
+  attachments.push(attachment([
     ``,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `💰 *OTHER FOOD COSTS*`,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-    ...otherCostLines,
+  ].join('\n')));
+
+  otherCostLines.forEach(l => attachments.push(attachment(l.text, l.color)));
+
+  attachments.push(attachment([
     ``,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `🚚 *DELIVERIES — ${curMonthName}*`,
@@ -207,23 +238,27 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
     ``,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `👨‍🍳 *For Your Review Chef* <@U03N1R6LA78> <@U03KWLL7KV5>`,
-  ];
+  ].join('\n')));
 
-  return sections.join('\n');
+  return {
+    fallbackText: `📊 ${curMonthName} vs ${prevMonthName} — Cost Analysis Report`,
+    attachments : attachments,
+  };
 }
 
 // ============================================================
 // SLACK POSTER
 // ============================================================
-function postToSlack(text) {
+function postToSlack(message) {
   if (!SLACK_WEBHOOK_URL) {
     throw new Error('SLACK_WEBHOOK_URL is not set. Run setSlackWebhookUrl() from the script editor first.');
   }
 
   const payload = JSON.stringify({
-    text      : text,
-    username  : 'Cost Analysis Bot',
-    icon_emoji: ':bar_chart:',
+    text       : message.fallbackText,
+    attachments: message.attachments,
+    username   : 'Cost Analysis Bot',
+    icon_emoji : ':bar_chart:',
   });
 
   const options = {
