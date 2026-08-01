@@ -134,13 +134,15 @@ function sendCostAnalysisReport() {
 // ============================================================
 // MESSAGE BUILDER
 // ============================================================
-// Slack messages have no font-color control, so an "increased" metric is
-// flagged the way Slack actually supports it: a red side-bar on its own
-// attachment (color: 'danger'). Each line that needs a bar becomes its own
-// attachment; header/divider text and unchanged/decreased lines are grouped
-// into plain (uncolored) attachments so the message still reads as blocks.
+// Slack mrkdwn has no font-color control at all — no red, no color of any
+// kind, in a single flowing text block like this one. A 🔴 marker on
+// increased lines is the closest available substitute that doesn't break
+// the single-block layout (an attachment color bar would, since it forces
+// each colored line into its own separate bordered block).
 function buildMessage(cur, prev, curMonthName, prevMonthName) {
 
+  // Plain delta — used for the Deliveries section, which isn't part of
+  // the red-flag request (increased deliveries/DPD isn't a "bad" thing).
   function delta(current, previous) {
     if (previous === 0 && current === 0) return '─  0.0%';
     if (previous === 0) return '▲ New';
@@ -150,11 +152,17 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
     return '─  0.0%  _(no change)_';
   }
 
-  // "New" (previous 0, current > 0) counts as an increase — a cost that
-  // didn't exist before is exactly the kind of thing this flag is for.
-  function isIncrease(current, previous) {
-    if (previous === 0) return current !== 0;
-    return ((current - previous) / Math.abs(previous)) * 100 > 0.05;
+  // Flagged delta — used for Wastage Breakdown / Other Food Costs, where
+  // an increase is a cost going up. "New" (previous 0, current > 0) counts
+  // as an increase too: a cost that didn't exist before is exactly the
+  // kind of thing this flag is for.
+  function deltaFlagged(current, previous) {
+    if (previous === 0 && current === 0) return '─  0.0%';
+    if (previous === 0) return '🔴 ▲ New';
+    const pct = ((current - previous) / Math.abs(previous)) * 100;
+    if (pct > 0.05)  return `🔴 ▲ +${pct.toFixed(1)}%  _(increased)_`;
+    if (pct < -0.05) return `▼ ${pct.toFixed(1)}%  _(decreased)_`;
+    return '─  0.0%  _(no change)_';
   }
 
   function aed(v) {
@@ -167,10 +175,7 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
 
   function line(label, curVal, prevVal, formatter) {
     if (!curVal || curVal === 0) return null;
-    return {
-      text : `• *${label}*   ${formatter(curVal)}   ${delta(curVal, prevVal)}`,
-      color: isIncrease(curVal, prevVal) ? 'danger' : null,
-    };
+    return `• *${label}*   ${formatter(curVal)}   ${deltaFlagged(curVal, prevVal)}`;
   }
 
   const wastageLines = [
@@ -199,15 +204,7 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
     line('Marketplace Food Cost:', cur.mktFood,    prev.mktFood,    aed),
   ].filter(l => l !== null);
 
-  function attachment(text, color) {
-    const a = { blocks: [{ type: 'section', text: { type: 'mrkdwn', text: text } }] };
-    if (color) a.color = color;
-    return a;
-  }
-
-  const attachments = [];
-
-  attachments.push(attachment([
+  const sections = [
     `🌅 *Good Morning!*`,
     ``,
     `📊 *${curMonthName} vs ${prevMonthName} — Cost Analysis Report*`,
@@ -215,20 +212,12 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `♻️ *WASTAGE BREAKDOWN*`,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-  ].join('\n')));
-
-  wastageLines.forEach(l => attachments.push(attachment(l.text, l.color)));
-
-  attachments.push(attachment([
+    ...wastageLines,
     ``,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `💰 *OTHER FOOD COSTS*`,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-  ].join('\n')));
-
-  otherCostLines.forEach(l => attachments.push(attachment(l.text, l.color)));
-
-  attachments.push(attachment([
+    ...otherCostLines,
     ``,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `🚚 *DELIVERIES — ${curMonthName}*`,
@@ -238,27 +227,23 @@ function buildMessage(cur, prev, curMonthName, prevMonthName) {
     ``,
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `👨‍🍳 *For Your Review Chef* <@U03N1R6LA78> <@U03KWLL7KV5>`,
-  ].join('\n')));
+  ];
 
-  return {
-    fallbackText: `📊 ${curMonthName} vs ${prevMonthName} — Cost Analysis Report`,
-    attachments : attachments,
-  };
+  return sections.join('\n');
 }
 
 // ============================================================
 // SLACK POSTER
 // ============================================================
-function postToSlack(message) {
+function postToSlack(text) {
   if (!SLACK_WEBHOOK_URL) {
     throw new Error('SLACK_WEBHOOK_URL is not set. Run setSlackWebhookUrl() from the script editor first.');
   }
 
   const payload = JSON.stringify({
-    text       : message.fallbackText,
-    attachments: message.attachments,
-    username   : 'Cost Analysis Bot',
-    icon_emoji : ':bar_chart:',
+    text      : text,
+    username  : 'Cost Analysis Bot',
+    icon_emoji: ':bar_chart:',
   });
 
   const options = {
